@@ -13,8 +13,11 @@ const FORBIDDEN_RUNTIME_PATTERNS = [
 
 export function enforce(oversightRoot, targetRoot, workerRoot = null) {
   const workflow = fs.readFileSync(path.join(oversightRoot, '.github', 'workflows', 'independent-oversight.yml'), 'utf8');
-  if (!/permissions:\s*\r?\n\s*contents:\s*read/.test(workflow)
-      || /contents:\s*write|issues:\s*write|actions:\s*write/.test(workflow)) {
+  const writePermissions = workflow.match(/contents:\s*write/g) || [];
+  if (!/^permissions:\s*\r?\n\s*contents:\s*read/m.test(workflow)
+      || writePermissions.length !== 1
+      || !/return-vetted-data:[\s\S]*?environment:\s*vetted-return[\s\S]*?permissions:\s*\r?\n\s*contents:\s*write/.test(workflow)
+      || /issues:\s*write|actions:\s*write/.test(workflow)) {
     throw new Error('Oversight workflow permissions exceed read-only.');
   }
   if (!/repository:\s*jonathanblunt1214-lgtm\/The-Crucible/.test(workflow)

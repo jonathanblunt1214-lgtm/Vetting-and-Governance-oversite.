@@ -13,7 +13,7 @@ function fixture() {
   const target = path.join(root, 'target');
   fs.mkdirSync(path.join(target, 'src'), { recursive: true });
   fs.writeFileSync(path.join(target, 'src', 'scientificLearning.js'), '');
-  fs.writeFileSync(path.join(root, '.github', 'workflows', 'independent-oversight.yml'), 'permissions:\n  contents: read\nrepository: jonathanblunt1214-lgtm/The-Crucible\nrepository: jonathanblunt1214-lgtm/Learning-Worker\npersist-credentials: false\npersist-credentials: false\npersist-credentials: false\n');
+  fs.writeFileSync(path.join(root, '.github', 'workflows', 'independent-oversight.yml'), 'permissions:\n  contents: read\nrepository: jonathanblunt1214-lgtm/The-Crucible\nrepository: jonathanblunt1214-lgtm/Learning-Worker\npersist-credentials: false\npersist-credentials: false\npersist-credentials: false\nreturn-vetted-data:\n  environment: vetted-return\n  permissions:\n    contents: write\n');
   for (const file of ALLOWED) fs.writeFileSync(path.join(root, 'oversight', file), 'export const independent = true;');
   return { root, target };
 }
