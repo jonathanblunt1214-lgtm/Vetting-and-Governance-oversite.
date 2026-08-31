@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "crucibleCommit": "ebd26ff60e38fb740c2e3a47a9632ac22e7a659b",
+  "learningWorkerCommit": "bbfb502f7a5da7800d29a3bcadeba22d461589b5",
+  "oversight": {
+    "state": "passed",
+    "severity": "none",
+    "action": "NONE",
+    "organism": {
+      "state": "passed",
+      "severity": "none",
+      "action": "NONE",
+      "findings": []
+    },
+    "crucible": {
+      "state": "passed",
+      "severity": "none",
+      "action": "NONE",
+      "findings": [],
+      "requiredChecked": 9
+    },
+    "learningWorker": {
+      "state": "passed",
+      "severity": "none",
+      "action": "NONE",
+      "findings": [],
+      "requiredChecked": 5
+    }
+  },
+  "manifests": [],
+  "generatedAt": "2026-08-31T16:16:31.890Z",
+  "independent": true,
+  "assimilatedRecords": 0,
+  "proofStageSatisfied": false
+}
