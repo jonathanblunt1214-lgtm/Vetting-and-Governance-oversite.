@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       critical: ${{ steps.audit.outputs.critical }}
+      crucible_sha: ${{ steps.target.outputs.sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -36,6 +37,7 @@ jobs:
           repository: jonathanblunt1214-lgtm/Learning-Worker
           path: learning-worker
           persist-credentials: false
+          token: ${{ secrets.OVERSIGHT_READ_TOKEN }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
@@ -79,6 +81,45 @@ jobs:
       - name: Fail after preserving independent evidence
         if: steps.audit.outcome == 'failure'
         run: exit 1
+
+  return-vetted-data:
+    needs: oversight
+    if: needs.oversight.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: vetted-return
+    steps:
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
+        with:
+          name: independent-oversight-${{ needs.oversight.outputs.crucible_sha }}
+      - name: Sign exact vetted report and dispatch it to Learning Worker
+        env:
+          RETURN_TOKEN: ${{ secrets.OVERSIGHT_RETURN_TOKEN }}
+          SIGNING_PRIVATE_KEY: ${{ secrets.OVERSIGHT_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          trap 'rm -f signing-key.pem oversight-report.sig dispatch.json' EXIT
+          test -n "$RETURN_TOKEN"
+          test -n "$SIGNING_PRIVATE_KEY"
+          printf '%s' "$SIGNING_PRIVATE_KEY" > signing-key.pem
+          openssl pkeyutl -sign -rawin -inkey signing-key.pem -in oversight-report.json -out oversight-report.sig
+          report_sha=$(sha256sum oversight-report.json | cut -d' ' -f1)
+          report_b64=$(base64 -w0 oversight-report.json)
+          signature_b64=$(base64 -w0 oversight-report.sig)
+          test "${#report_b64}" -le 50000
+          jq -n \
+            --arg event_type oversight_vetting_result \
+            --arg reportSha256 "$report_sha" \
+            --arg reportB64 "$report_b64" \
+            --arg signatureB64 "$signature_b64" \
+            '{event_type:$event_type,client_payload:{schemaVersion:1,reportSha256:$reportSha256,reportB64:$reportB64,signatureB64:$signatureB64}}' > dispatch.json
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $RETURN_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/jonathanblunt1214-lgtm/Learning-Worker/dispatches \
+            --data-binary @dispatch.json
 
   emergency-stop:
     needs: oversight
