@@ -115,7 +115,7 @@ jobs:
           cp oversight-report.json "$RUNNER_TEMP/vetted-result/latest.json"
           cp oversight-report.sig "$RUNNER_TEMP/vetted-result/latest.sig"
           git fetch origin vetted-results || true
-          if git show-ref --verify --quiet refs/remotes/origin/vetted-results; then git switch -C vetted-results origin/vetted-results; else git switch --orphan vetted-results; git rm -rf .; fi
+          if git show-ref --verify --quiet refs/remotes/origin/vetted-results; then git switch -C vetted-results origin/vetted-results; else git switch --orphan vetted-results; if [ -n "$(git ls-files)" ]; then git rm -rf .; fi; fi
           mkdir -p results
           cp "$RUNNER_TEMP/vetted-result/latest.json" results/latest.json
           cp "$RUNNER_TEMP/vetted-result/latest.sig" results/latest.sig
