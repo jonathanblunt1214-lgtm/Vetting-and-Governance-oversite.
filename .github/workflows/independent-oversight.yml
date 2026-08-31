@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore: ["results/**"]
   schedule:
-    - cron: "17 6 * * *"
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
@@ -18,6 +19,8 @@ jobs:
   oversight:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      critical: ${{ steps.audit.outputs.critical }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -28,6 +31,11 @@ jobs:
           ref: development
           path: target
           persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: jonathanblunt1214-lgtm/Learning-Worker
+          path: learning-worker
+          persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
@@ -35,10 +43,31 @@ jobs:
         id: target
         working-directory: target
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Resolve exact Learning Worker commit
+        id: worker
+        working-directory: learning-worker
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Test the independent verifier
-        run: node --test oversight/verify.test.mjs
+        run: node --test oversight/verify.test.mjs oversight/firewall.test.mjs
+      - name: Enforce oversight separation firewall
+        run: node oversight/firewall.mjs . target learning-worker
       - name: Vet data and audit Crucible independently
-        run: node oversight/verify.mjs target inbox "${{ steps.target.outputs.sha }}"
+        id: audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          node oversight/verify.mjs target learning-worker inbox "${{ steps.target.outputs.sha }}" "${{ steps.worker.outputs.sha }}"
+          audit_status=$?
+          critical=$(node -e "const r=require('./oversight-report.json');process.stdout.write(String(r.oversight.severity==='critical'))")
+          echo "critical=$critical" >> "$GITHUB_OUTPUT"
+          exit "$audit_status"
+      - name: Prove both checkouts remained unchanged
+        shell: bash
+        run: |
+          test -z "$(git status --porcelain --untracked-files=no)"
+          test -z "$(git -C target status --porcelain --untracked-files=no)"
+          test -z "$(git -C learning-worker status --porcelain --untracked-files=no)"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -46,3 +75,69 @@ jobs:
           path: oversight-report.json
           if-no-files-found: error
           retention-days: 90
+
+      - name: Fail after preserving independent evidence
+        if: steps.audit.outcome == 'failure'
+        run: exit 1
+
+  emergency-stop:
+    needs: oversight
+    if: always() && needs.oversight.outputs.critical == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: emergency-control
+    steps:
+      - name: Disable the complete Crucible organism immediately
+        id: stop
+        continue-on-error: true
+        env:
+          CONTROL_TOKEN: ${{ secrets.OVERSIGHT_CONTROL_TOKEN }}
+        shell: bash
+        run: |
+          test -n "$CONTROL_TOKEN"
+          curl --fail-with-body --silent --show-error \
+            --request PUT \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $CONTROL_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/jonathanblunt1214-lgtm/The-Crucible/actions/permissions \
+            --data '{"enabled":false}'
+          curl --fail-with-body --silent --show-error \
+            --request PUT \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $CONTROL_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/jonathanblunt1214-lgtm/Learning-Worker/actions/permissions \
+            --data '{"enabled":false}'
+
+      - name: Email owner immediately
+        if: always()
+        env:
+          SMTP_HOST: ${{ secrets.OVERSIGHT_SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.OVERSIGHT_SMTP_PORT }}
+          SMTP_USER: ${{ secrets.OVERSIGHT_SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.OVERSIGHT_SMTP_PASSWORD }}
+          ALERT_TO: jonathan-blunt@hotmail.com
+          ALERT_FROM: ${{ secrets.OVERSIGHT_ALERT_FROM }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, smtplib, ssl
+          from email.message import EmailMessage
+          required = ['SMTP_HOST','SMTP_PORT','SMTP_USER','SMTP_PASSWORD','ALERT_TO','ALERT_FROM','RUN_URL']
+          missing = [name for name in required if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Missing oversight-owned alert configuration: ' + ', '.join(missing))
+          message = EmailMessage()
+          message['Subject'] = 'CRITICAL: The Crucible stopped for out-of-scope behavior'
+          message['From'] = os.environ['ALERT_FROM']
+          message['To'] = os.environ['ALERT_TO']
+          message['Importance'] = 'high'
+          message['Priority'] = 'urgent'
+          message['X-Priority'] = '1 (Highest)'
+          message.set_content('Independent oversight detected a critical failure or scope violation. GitHub Actions for The Crucible and Learning-Worker were disabled. Review: ' + os.environ['RUN_URL'])
+          with smtplib.SMTP_SSL(os.environ['SMTP_HOST'], int(os.environ['SMTP_PORT']), context=ssl.create_default_context()) as client:
+              client.login(os.environ['SMTP_USER'], os.environ['SMTP_PASSWORD'])
+              client.send_message(message)
+          PY

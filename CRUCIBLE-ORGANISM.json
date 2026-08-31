@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "organismId": "github:jonathanblunt1214-lgtm/The-Crucible",
+  "authority": "independent-oversight",
+  "components": [
+    {
+      "componentId": "core",
+      "repository": "jonathanblunt1214-lgtm/The-Crucible",
+      "ref": "development",
+      "role": "governed-core"
+    },
+    {
+      "componentId": "learning-worker",
+      "repository": "jonathanblunt1214-lgtm/Learning-Worker",
+      "ref": "default",
+      "role": "governed-learning-worker"
+    }
+  ],
+  "oversightIsComponent": false,
+  "assimilationAuthorized": false
+}
