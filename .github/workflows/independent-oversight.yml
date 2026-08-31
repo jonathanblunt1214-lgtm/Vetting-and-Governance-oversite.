@@ -52,7 +52,10 @@ jobs:
       - name: Test the independent verifier
         run: node --test oversight/verify.test.mjs oversight/firewall.test.mjs
       - name: Enforce oversight separation firewall
-        run: node oversight/firewall.mjs . target learning-worker
+        run: |
+          output=$(node oversight/firewall.mjs . target learning-worker)
+          echo "$output"
+          echo "$output" | jq -e '.state == "isolated" and .assimilatesData == false' >/dev/null
       - name: Vet data and audit Crucible independently
         id: audit
         continue-on-error: true
@@ -61,6 +64,7 @@ jobs:
           set +e
           node oversight/verify.mjs target learning-worker inbox "${{ steps.target.outputs.sha }}" "${{ steps.worker.outputs.sha }}"
           audit_status=$?
+          test -s oversight-report.json || exit 1
           critical=$(node -e "const r=require('./oversight-report.json');process.stdout.write(String(r.oversight.severity==='critical'))")
           echo "critical=$critical" >> "$GITHUB_OUTPUT"
           exit "$audit_status"

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ALLOWED_MODULES = new Set(['firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs']);
 const FORBIDDEN_RUNTIME_PATTERNS = [
@@ -37,6 +38,6 @@ export function enforce(oversightRoot, targetRoot, workerRoot = null) {
   return { state: 'isolated', assimilatesData: false, sharedRuntimeImports: 0, writePermissions: 0, persistedCredentials: 0, targetMutationAuthorized: false };
 }
 
-if (import.meta.url === `file:///${process.argv[1]?.replaceAll('\\', '/')}`) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   console.log(JSON.stringify(enforce(path.resolve(process.argv[2]), path.resolve(process.argv[3]), process.argv[4] ? path.resolve(process.argv[4]) : null)));
 }
