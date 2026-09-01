@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ALLOWED_MODULES = new Set(['firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs']);
+const ALLOWED_MODULES = new Set(['encrypted-custody.mjs', 'encrypted-custody.test.mjs', 'firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs']);
 const FORBIDDEN_RUNTIME_PATTERNS = [
   /from\s+['"](?:\.\.\/)*target/i,
   /require\s*\([^)]*target/i,
@@ -29,9 +29,9 @@ export function enforce(oversightRoot, targetRoot, workerRoot = null) {
   const moduleNames = fs.readdirSync(path.join(oversightRoot, 'oversight')).filter((item) => /\.(?:mjs|js)$/.test(item));
   const unexpected = moduleNames.filter((item) => !ALLOWED_MODULES.has(item));
   if (unexpected.length > 0) throw new Error(`Oversight firewall rejected unauthorized modules: ${unexpected.join(', ')}.`);
-  const verifier = fs.readFileSync(path.join(oversightRoot, 'oversight', 'verify.mjs'), 'utf8');
-  for (const pattern of FORBIDDEN_RUNTIME_PATTERNS) {
-    if (pattern.test(verifier)) throw new Error(`Oversight firewall rejected verifier capability: ${pattern}.`);
+  for (const moduleName of moduleNames.filter((item) => !item.includes('.test.'))) {
+    const source = fs.readFileSync(path.join(oversightRoot, 'oversight', moduleName), 'utf8');
+    for (const pattern of FORBIDDEN_RUNTIME_PATTERNS) if (pattern.test(source)) throw new Error(`Oversight firewall rejected ${moduleName} capability: ${pattern}.`);
   }
   if (!fs.existsSync(path.join(targetRoot, 'src', 'scientificLearning.js'))) throw new Error('Exact Crucible target checkout is unavailable.');
   if (workerRoot && !fs.existsSync(workerRoot)) throw new Error('Exact Learning Worker checkout is unavailable.');

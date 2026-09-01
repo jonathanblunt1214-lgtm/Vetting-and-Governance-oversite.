@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { enforce } from './firewall.mjs';
 
-const ALLOWED = ['firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs'];
+const ALLOWED = ['encrypted-custody.mjs', 'encrypted-custody.test.mjs', 'firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs'];
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oversight-firewall-'));
   fs.mkdirSync(path.join(root, '.github', 'workflows'), { recursive: true });
