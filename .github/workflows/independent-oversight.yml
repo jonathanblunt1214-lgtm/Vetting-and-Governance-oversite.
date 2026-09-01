@@ -149,7 +149,7 @@ jobs:
           SIGNING_PRIVATE_KEY: ${{ secrets.OVERSIGHT_SIGNING_PRIVATE_KEY }}
         shell: bash
         run: |
-          trap 'rm -f signing-key.pem oversight-report.sig vetted-custody/encrypted-custody-report.sig' EXIT
+          trap 'rm -f signing-key.pem oversight-report.sig' EXIT
           test -n "$SIGNING_PRIVATE_KEY"
           printf '%s' "$SIGNING_PRIVATE_KEY" > signing-key.pem
           openssl pkeyutl -sign -rawin -inkey signing-key.pem -in oversight-report.json -out oversight-report.sig
