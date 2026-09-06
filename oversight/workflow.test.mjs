@@ -22,6 +22,7 @@ test('additive report preservation occurs before the original oversight failure'
 
 test('worker custody is exact-tip and stale-lineage bound before publication', () => {
   assert.match(workflow, /ref: oversight-export/);
+  assert.match(workflow, /test "\$\{#worker_entries\[@\]\}" -eq 3[\s\S]*?grep -qx 'sources\/'[\s\S]*?grep -qx 'sources\/source-queue\.json'/);
   assert.match(workflow, /worker_sha=\$\(git -C learning-worker rev-parse HEAD\)/);
   assert.match(workflow, /vetted_state_sha=\$\(git -C "\$RUNNER_TEMP\/vetted-state" rev-parse HEAD\)/);
   assert.match(workflow, /worker-export\.mjs merge[^\r\n]+--worker-sha "\$worker_sha"[^\r\n]+--vetted-state-sha "\$vetted_state_sha"/);
