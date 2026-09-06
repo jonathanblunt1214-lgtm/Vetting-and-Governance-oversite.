@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ALLOWED_MODULES = new Set(['encrypted-custody.mjs', 'encrypted-custody.test.mjs', 'firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs']);
+const ALLOWED_MODULES = new Set(['encrypted-custody.mjs', 'encrypted-custody.test.mjs', 'firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs', 'worker-export.mjs', 'worker-export.test.mjs', 'workflow.test.mjs']);
 const FORBIDDEN_RUNTIME_PATTERNS = [
   /from\s+['"](?:\.\.\/)*target/i,
   /require\s*\([^)]*target/i,
@@ -17,7 +17,8 @@ export function enforce(oversightRoot, targetRoot, workerRoot = null) {
   const writePermissions = workflow.match(/contents:\s*write/g) || [];
   if (!/^permissions:\s*\r?\n\s*contents:\s*read/m.test(workflow)
       || writePermissions.length !== 1
-      || !/return-vetted-data:[\s\S]*?environment:\s*vetted-return[\s\S]*?permissions:\s*\r?\n\s*contents:\s*write/.test(workflow)
+      || !/archive-oversight-report:[\s\S]*?environment:\s*vetted-return[\s\S]*?permissions:\s*\r?\n\s*contents:\s*write/.test(workflow)
+      || !/return-vetted-data:[\s\S]*?environment:\s*vetted-return[\s\S]*?permissions:\s*\r?\n\s*contents:\s*read/.test(workflow)
       || /issues:\s*write|actions:\s*write/.test(workflow)) {
     throw new Error('Oversight workflow permissions exceed read-only.');
   }

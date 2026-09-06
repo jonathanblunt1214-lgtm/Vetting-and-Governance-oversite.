@@ -22,6 +22,7 @@ jobs:
     outputs:
       critical: ${{ steps.audit.outputs.critical }}
       crucible_sha: ${{ steps.target.outputs.sha }}
+      report_b64: ${{ steps.preserve.outputs.report_b64 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -93,41 +94,27 @@ jobs:
           node oversight/encrypted-custody.mjs decrypt --input "$RUNNER_TEMP/oversight-plaintext/source-bundle.enc" --output "$RUNNER_TEMP/oversight-plaintext/source-bundle.tar.gz"
           tar -xzf "$RUNNER_TEMP/oversight-plaintext/source-bundle.tar.gz" -C "$RUNNER_TEMP/oversight-plaintext/root"
           node oversight/encrypted-custody.mjs vet --root "$RUNNER_TEMP/oversight-plaintext/root" --ciphertext-manifest encrypted-input/encrypted-chunks.json > encrypted-custody-report.json
-          node oversight/encrypted-custody.mjs encrypt-vetted --input "$RUNNER_TEMP/oversight-plaintext/source-bundle.tar.gz" --output "$RUNNER_TEMP/oversight-plaintext/vetted-source-bundle.enc"
-          mkdir vetted-encrypted-output
-          node oversight/encrypted-custody.mjs split-vetted --input "$RUNNER_TEMP/oversight-plaintext/vetted-source-bundle.enc" --root vetted-encrypted-output
-          node oversight/encrypted-custody.mjs bind-vetted --report encrypted-custody-report.json --ciphertext-manifest vetted-encrypted-output/encrypted-chunks.json
       - name: Prove both checkouts remained unchanged
         shell: bash
         run: |
           test -z "$(git status --porcelain --untracked-files=no)"
           test -z "$(git -C target status --porcelain --untracked-files=no)"
           test -z "$(git -C learning-worker status --porcelain --untracked-files=no)"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Preserve the original oversight report as an additive job output
+        id: preserve
         if: always()
-        with:
-          name: independent-oversight-${{ steps.target.outputs.sha }}
-          path: oversight-report.json
-          if-no-files-found: error
-          retention-days: 90
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: success()
-        with:
-          name: vetted-encrypted-custody-${{ steps.target.outputs.sha }}
-          path: |
-            vetted-encrypted-output/encrypted-chunks.json
-            vetted-encrypted-output/source-bundle.part-*.enc
-            encrypted-custody-report.json
-          if-no-files-found: error
-          retention-days: 1
+        shell: bash
+        run: |
+          test -s oversight-report.json
+          printf 'report_b64=%s\n' "$(base64 -w0 oversight-report.json)" >> "$GITHUB_OUTPUT"
 
       - name: Fail after preserving independent evidence
         if: steps.audit.outcome == 'failure'
         run: exit 1
 
-  return-vetted-data:
+  archive-oversight-report:
     needs: oversight
-    if: needs.oversight.result == 'success'
+    if: always() && needs.oversight.outputs.report_b64 != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: vetted-return
@@ -137,23 +124,19 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
-        with:
-          name: independent-oversight-${{ needs.oversight.outputs.crucible_sha }}
-      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4
-        with:
-          name: vetted-encrypted-custody-${{ needs.oversight.outputs.crucible_sha }}
-          path: vetted-custody
-      - name: Sign and publish exact vetted report on oversight-owned branch
+      - name: Sign and archive the exact report without replacing the oversight result
         env:
+          REPORT_B64: ${{ needs.oversight.outputs.report_b64 }}
           SIGNING_PRIVATE_KEY: ${{ secrets.OVERSIGHT_SIGNING_PRIVATE_KEY }}
         shell: bash
         run: |
-          trap 'rm -f signing-key.pem oversight-report.sig' EXIT
+          set -euo pipefail
+          trap 'rm -f signing-key.pem oversight-report.json oversight-report.sig' EXIT
+          test -n "$REPORT_B64"
           test -n "$SIGNING_PRIVATE_KEY"
+          printf '%s' "$REPORT_B64" | base64 --decode > oversight-report.json
           printf '%s' "$SIGNING_PRIVATE_KEY" > signing-key.pem
           openssl pkeyutl -sign -rawin -inkey signing-key.pem -in oversight-report.json -out oversight-report.sig
-          openssl pkeyutl -sign -rawin -inkey signing-key.pem -in vetted-custody/encrypted-custody-report.json -out vetted-custody/encrypted-custody-report.sig
           report_sha=$(sha256sum oversight-report.json | cut -d' ' -f1)
           mkdir -p "$RUNNER_TEMP/vetted-result"
           cp oversight-report.json "$RUNNER_TEMP/vetted-result/latest.json"
@@ -165,29 +148,105 @@ jobs:
           cp "$RUNNER_TEMP/vetted-result/latest.sig" results/latest.sig
           printf '{"schemaVersion":1,"reportSha256":"%s"}\n' "$report_sha" > results/latest.metadata.json
           git add results
-          if ! git diff --cached --quiet; then git -c user.name='Independent Crucible Oversight' -c user.email='oversight@invalid.local' commit -m "Publish vetted result $report_sha"; fi
-          git push origin HEAD:vetted-results
-      - name: Publish only oversight-approved ciphertext for Learning-Worker
+          if ! git diff --cached --quiet; then git -c user.name='Independent Crucible Oversight' -c user.email='oversight@invalid.local' commit -m "Archive oversight report $report_sha"; git push origin HEAD:vetted-results; fi
+
+  return-vetted-data:
+    needs: oversight
+    if: needs.oversight.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: vetted-return
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: jonathanblunt1214-lgtm/Learning-Worker
+          ref: main
+          path: learning-worker
+          persist-credentials: false
+          ssh-key: ${{ secrets.WORKER_READ_DEPLOY_KEY }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: jonathanblunt1214-lgtm/Learning-Worker
+          ref: oversight-export
+          path: worker-export
+          persist-credentials: false
+          ssh-key: ${{ secrets.WORKER_READ_DEPLOY_KEY }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         env:
+          NODE_VERSION: 24
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Pull raw and current vetted custody under distinct oversight identities
+        env:
+          SOURCE_STATE_READ_KEY: ${{ secrets.SOURCE_STATE_READ_KEY }}
           VETTED_STATE_WRITE_KEY: ${{ secrets.VETTED_STATE_WRITE_KEY }}
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$SOURCE_STATE_READ_KEY"
           test -n "$VETTED_STATE_WRITE_KEY"
-          mkdir -p "$RUNNER_TEMP/vetted-state-ssh"
-          trap 'rm -rf "$RUNNER_TEMP/vetted-state-ssh" "$RUNNER_TEMP/vetted-state"' EXIT
+          mkdir -p "$RUNNER_TEMP/source-state-ssh" "$RUNNER_TEMP/vetted-state-ssh"
+          printf '%s\n' "$SOURCE_STATE_READ_KEY" > "$RUNNER_TEMP/source-state-ssh/key"
           printf '%s\n' "$VETTED_STATE_WRITE_KEY" > "$RUNNER_TEMP/vetted-state-ssh/key"
-          chmod 600 "$RUNNER_TEMP/vetted-state-ssh/key"
-          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/vetted-state-ssh/known_hosts"
-          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/vetted-state-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/vetted-state-ssh/known_hosts -o StrictHostKeyChecking=yes"
-          git clone --depth 1 git@github.com:jonathanblunt1214-lgtm/Crucible-Vetted-Learning-State.git "$RUNNER_TEMP/vetted-state"
+          chmod 600 "$RUNNER_TEMP/source-state-ssh/key" "$RUNNER_TEMP/vetted-state-ssh/key"
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/source-state-ssh/known_hosts"
+          cp "$RUNNER_TEMP/source-state-ssh/known_hosts" "$RUNNER_TEMP/vetted-state-ssh/known_hosts"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/source-state-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/source-state-ssh/known_hosts -o StrictHostKeyChecking=yes" git clone --depth 1 git@github.com:jonathanblunt1214-lgtm/Crucible-Learning-State.git encrypted-input
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/vetted-state-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/vetted-state-ssh/known_hosts -o StrictHostKeyChecking=yes" git clone --depth 1 git@github.com:jonathanblunt1214-lgtm/Crucible-Vetted-Learning-State.git "$RUNNER_TEMP/vetted-state"
+      - name: Test candidate handoff and encrypted custody controls
+        run: node --test oversight/encrypted-custody.test.mjs oversight/worker-export.test.mjs
+      - name: Independently validate, merge, and re-encrypt candidate custody
+        env:
+          CRUCIBLE_SOURCE_BUNDLE_KEY: ${{ secrets.CRUCIBLE_SOURCE_BUNDLE_KEY }}
+          CRUCIBLE_VETTED_BUNDLE_KEY: ${{ secrets.CRUCIBLE_VETTED_BUNDLE_KEY }}
+          OVERSIGHT_WORKER_BUNDLE_KEY: ${{ secrets.OVERSIGHT_WORKER_BUNDLE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'rm -rf "$RUNNER_TEMP/custody"' EXIT
+          mkdir -p "$RUNNER_TEMP/custody/source-root" "$RUNNER_TEMP/custody/worker-root" "$RUNNER_TEMP/custody/vetted-output"
+          node oversight/encrypted-custody.mjs join --root encrypted-input --output "$RUNNER_TEMP/custody/source-bundle.enc"
+          node oversight/encrypted-custody.mjs decrypt --input "$RUNNER_TEMP/custody/source-bundle.enc" --output "$RUNNER_TEMP/custody/source-bundle.tar.gz"
+          tar -xzf "$RUNNER_TEMP/custody/source-bundle.tar.gz" -C "$RUNNER_TEMP/custody/source-root"
+          node oversight/encrypted-custody.mjs vet --root "$RUNNER_TEMP/custody/source-root" --ciphertext-manifest encrypted-input/encrypted-chunks.json > "$RUNNER_TEMP/custody/encrypted-custody-report.json"
+          node oversight/worker-export.mjs join --root worker-export --output "$RUNNER_TEMP/custody/worker-state.enc"
+          node oversight/worker-export.mjs decrypt --input "$RUNNER_TEMP/custody/worker-state.enc" --output "$RUNNER_TEMP/custody/worker-state.zip" --manifest worker-export/worker-export-manifest.json
+          mapfile -t worker_entries < <(unzip -Z1 "$RUNNER_TEMP/custody/worker-state.zip")
+          test "${#worker_entries[@]}" -eq 2
+          printf '%s\n' "${worker_entries[@]}" | grep -qx 'sources/source-queue.json'
+          printf '%s\n' "${worker_entries[@]}" | grep -Eq '^[^/]+\.learning\.json$'
+          unzip -q "$RUNNER_TEMP/custody/worker-state.zip" -d "$RUNNER_TEMP/custody/worker-root"
+          worker_sha=$(git -C learning-worker rev-parse HEAD)
+          vetted_state_sha=$(git -C "$RUNNER_TEMP/vetted-state" rev-parse HEAD)
+          node oversight/worker-export.mjs merge --worker-root "$RUNNER_TEMP/custody/worker-root" --vetted-root "$RUNNER_TEMP/custody/source-root" --manifest worker-export/worker-export-manifest.json --worker-sha "$worker_sha" --vetted-state-sha "$vetted_state_sha" --report "$RUNNER_TEMP/custody/encrypted-custody-report.json"
+          tar -czf "$RUNNER_TEMP/custody/merged-source-bundle.tar.gz" -C "$RUNNER_TEMP/custody/source-root" .
+          node oversight/encrypted-custody.mjs encrypt-vetted --input "$RUNNER_TEMP/custody/merged-source-bundle.tar.gz" --output "$RUNNER_TEMP/custody/vetted-source-bundle.enc"
+          node oversight/encrypted-custody.mjs split-vetted --input "$RUNNER_TEMP/custody/vetted-source-bundle.enc" --root "$RUNNER_TEMP/custody/vetted-output"
+          node oversight/encrypted-custody.mjs bind-vetted --report "$RUNNER_TEMP/custody/encrypted-custody-report.json" --ciphertext-manifest "$RUNNER_TEMP/custody/vetted-output/encrypted-chunks.json"
+      - name: Sign and publish only the independently approved ciphertext
+        env:
+          SIGNING_PRIVATE_KEY: ${{ secrets.OVERSIGHT_SIGNING_PRIVATE_KEY }}
+          VETTED_STATE_WRITE_KEY: ${{ secrets.VETTED_STATE_WRITE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'rm -f signing-key.pem' EXIT
+          test -n "$SIGNING_PRIVATE_KEY"
+          test -n "$VETTED_STATE_WRITE_KEY"
+          printf '%s' "$SIGNING_PRIVATE_KEY" > signing-key.pem
+          openssl pkeyutl -sign -rawin -inkey signing-key.pem -in "$RUNNER_TEMP/custody/encrypted-custody-report.json" -out "$RUNNER_TEMP/custody/encrypted-custody-report.sig"
           find "$RUNNER_TEMP/vetted-state" -maxdepth 1 -type f \( -name 'source-bundle.part-*.enc' -o -name 'encrypted-chunks.json' -o -name 'encrypted-custody-report.*' \) -delete
-          cp vetted-custody/vetted-encrypted-output/encrypted-chunks.json vetted-custody/vetted-encrypted-output/source-bundle.part-*.enc vetted-custody/encrypted-custody-report.json vetted-custody/encrypted-custody-report.sig "$RUNNER_TEMP/vetted-state/"
+          cp "$RUNNER_TEMP/custody/vetted-output/encrypted-chunks.json" "$RUNNER_TEMP/custody/vetted-output"/source-bundle.part-*.enc "$RUNNER_TEMP/custody/encrypted-custody-report.json" "$RUNNER_TEMP/custody/encrypted-custody-report.sig" "$RUNNER_TEMP/vetted-state/"
           cd "$RUNNER_TEMP/vetted-state"
           git add -- encrypted-chunks.json source-bundle.part-*.enc encrypted-custody-report.json encrypted-custody-report.sig
           if ! git diff --cached --quiet; then
             git -c user.name='Independent Crucible Oversight' -c user.email='oversight@invalid.local' commit -m "Publish independently vetted encrypted custody"
-            git push origin HEAD:main
+            GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/vetted-state-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/vetted-state-ssh/known_hosts -o StrictHostKeyChecking=yes" git push origin HEAD:main
           fi
 
   emergency-stop:

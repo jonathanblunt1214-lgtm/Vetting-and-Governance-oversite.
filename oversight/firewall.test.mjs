@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { enforce } from './firewall.mjs';
 
-const ALLOWED = ['encrypted-custody.mjs', 'encrypted-custody.test.mjs', 'firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs'];
+const ALLOWED = ['encrypted-custody.mjs', 'encrypted-custody.test.mjs', 'firewall.mjs', 'firewall.test.mjs', 'verify.mjs', 'verify.test.mjs', 'worker-export.mjs', 'worker-export.test.mjs', 'workflow.test.mjs'];
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oversight-firewall-'));
   fs.mkdirSync(path.join(root, '.github', 'workflows'), { recursive: true });
@@ -13,7 +13,7 @@ function fixture() {
   const target = path.join(root, 'target');
   fs.mkdirSync(path.join(target, 'src'), { recursive: true });
   fs.writeFileSync(path.join(target, 'src', 'scientificLearning.js'), '');
-  fs.writeFileSync(path.join(root, '.github', 'workflows', 'independent-oversight.yml'), 'permissions:\n  contents: read\nrepository: jonathanblunt1214-lgtm/The-Crucible\nrepository: jonathanblunt1214-lgtm/Learning-Worker\npersist-credentials: false\npersist-credentials: false\npersist-credentials: false\nreturn-vetted-data:\n  environment: vetted-return\n  permissions:\n    contents: write\n');
+  fs.writeFileSync(path.join(root, '.github', 'workflows', 'independent-oversight.yml'), 'permissions:\n  contents: read\nrepository: jonathanblunt1214-lgtm/The-Crucible\nrepository: jonathanblunt1214-lgtm/Learning-Worker\npersist-credentials: false\npersist-credentials: false\npersist-credentials: false\narchive-oversight-report:\n  environment: vetted-return\n  permissions:\n    contents: write\nreturn-vetted-data:\n  environment: vetted-return\n  permissions:\n    contents: read\n');
   for (const file of ALLOWED) fs.writeFileSync(path.join(root, 'oversight', file), 'export const independent = true;');
   return { root, target };
 }
