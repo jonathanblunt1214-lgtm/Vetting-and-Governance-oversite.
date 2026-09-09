@@ -63,7 +63,9 @@ jobs:
         working-directory: learning-worker
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Test the independent verifier
-        run: node --test oversight/verify.test.mjs oversight/firewall.test.mjs
+        run: |
+          node --test oversight/verify.test.mjs oversight/firewall.test.mjs
+          python -m unittest oversight.worker_archive_test
       - name: Enforce oversight separation firewall
         run: |
           output=$(node oversight/firewall.mjs . target learning-worker)
@@ -216,32 +218,7 @@ jobs:
           node oversight/encrypted-custody.mjs vet --root "$RUNNER_TEMP/custody/source-root" --ciphertext-manifest encrypted-input/encrypted-chunks.json > "$RUNNER_TEMP/custody/encrypted-custody-report.json"
           node oversight/worker-export.mjs join --root worker-export --output "$RUNNER_TEMP/custody/worker-state.enc"
           node oversight/worker-export.mjs decrypt --input "$RUNNER_TEMP/custody/worker-state.enc" --output "$RUNNER_TEMP/custody/worker-state.zip" --manifest worker-export/worker-export-manifest.json
-          mapfile -t worker_entries < <(unzip -Z1 "$RUNNER_TEMP/custody/worker-state.zip")
-          printf 'Worker archive structural entries (%s):\n' "${#worker_entries[@]}"
-          printf '%s\n' "${worker_entries[@]}"
-          queue_entry=''
-          learning_entry=''
-          unexpected_entries=''
-          for entry in "${worker_entries[@]}"; do
-            normalized_entry=${entry//\\//}
-            case "$normalized_entry" in
-              sources/) ;;
-              sources/source-queue.json)
-                if [ -n "$queue_entry" ]; then unexpected_entries="${unexpected_entries}duplicate queue entry\n"; else queue_entry="$entry"; fi
-                ;;
-              *.learning.json)
-                if [[ "$normalized_entry" == */* ]] || [ -n "$learning_entry" ]; then unexpected_entries="${unexpected_entries}invalid or duplicate learning entry\n"; else learning_entry="$entry"; fi
-                ;;
-              *) unexpected_entries="${unexpected_entries}unexpected archive entry: ${normalized_entry}\n" ;;
-            esac
-          done
-          test -z "$unexpected_entries"
-          test -n "$queue_entry"
-          test -n "$learning_entry"
-          mkdir -p "$RUNNER_TEMP/custody/worker-root/sources"
-          unzip -p "$RUNNER_TEMP/custody/worker-state.zip" "$queue_entry" > "$RUNNER_TEMP/custody/worker-root/sources/source-queue.json"
-          learning_name=${learning_entry//\\//}
-          unzip -p "$RUNNER_TEMP/custody/worker-state.zip" "$learning_entry" > "$RUNNER_TEMP/custody/worker-root/$learning_name"
+          python oversight/worker_archive.py "$RUNNER_TEMP/custody/worker-state.zip" "$RUNNER_TEMP/custody/worker-root"
           worker_sha=$(git -C learning-worker rev-parse HEAD)
           vetted_state_sha=$(git -C "$RUNNER_TEMP/vetted-state" rev-parse HEAD)
           node oversight/worker-export.mjs merge --worker-root "$RUNNER_TEMP/custody/worker-root" --vetted-root "$RUNNER_TEMP/custody/source-root" --manifest worker-export/worker-export-manifest.json --worker-sha "$worker_sha" --vetted-state-sha "$vetted_state_sha" --report "$RUNNER_TEMP/custody/encrypted-custody-report.json"
