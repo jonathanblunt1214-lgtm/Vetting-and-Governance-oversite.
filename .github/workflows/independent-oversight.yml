@@ -63,7 +63,9 @@ jobs:
         working-directory: learning-worker
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Test the independent verifier
-        run: node --test oversight/verify.test.mjs oversight/firewall.test.mjs
+        run: |
+          node --test oversight/verify.test.mjs oversight/firewall.test.mjs
+          python -m unittest oversight.worker_archive_test
       - name: Enforce oversight separation firewall
         run: |
           output=$(node oversight/firewall.mjs . target learning-worker)
@@ -208,7 +210,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trap 'rm -rf "$RUNNER_TEMP/custody"' EXIT
           mkdir -p "$RUNNER_TEMP/custody/source-root" "$RUNNER_TEMP/custody/worker-root" "$RUNNER_TEMP/custody/vetted-output"
           node oversight/encrypted-custody.mjs join --root encrypted-input --output "$RUNNER_TEMP/custody/source-bundle.enc"
           node oversight/encrypted-custody.mjs decrypt --input "$RUNNER_TEMP/custody/source-bundle.enc" --output "$RUNNER_TEMP/custody/source-bundle.tar.gz"
@@ -216,12 +217,7 @@ jobs:
           node oversight/encrypted-custody.mjs vet --root "$RUNNER_TEMP/custody/source-root" --ciphertext-manifest encrypted-input/encrypted-chunks.json > "$RUNNER_TEMP/custody/encrypted-custody-report.json"
           node oversight/worker-export.mjs join --root worker-export --output "$RUNNER_TEMP/custody/worker-state.enc"
           node oversight/worker-export.mjs decrypt --input "$RUNNER_TEMP/custody/worker-state.enc" --output "$RUNNER_TEMP/custody/worker-state.zip" --manifest worker-export/worker-export-manifest.json
-          mapfile -t worker_entries < <(unzip -Z1 "$RUNNER_TEMP/custody/worker-state.zip")
-          unexpected_entries=$(printf '%s\n' "${worker_entries[@]}" | grep -Ev '^(sources/|sources/source-queue\.json|[^/]+\.learning\.json)$' || true)
-          test -z "$unexpected_entries"
-          test "$(printf '%s\n' "${worker_entries[@]}" | grep -cx 'sources/source-queue.json')" -eq 1
-          test "$(printf '%s\n' "${worker_entries[@]}" | grep -Ec '^[^/]+\.learning\.json$')" -eq 1
-          unzip -q "$RUNNER_TEMP/custody/worker-state.zip" -d "$RUNNER_TEMP/custody/worker-root"
+          python oversight/worker_archive.py "$RUNNER_TEMP/custody/worker-state.zip" "$RUNNER_TEMP/custody/worker-root"
           worker_sha=$(git -C learning-worker rev-parse HEAD)
           vetted_state_sha=$(git -C "$RUNNER_TEMP/vetted-state" rev-parse HEAD)
           node oversight/worker-export.mjs merge --worker-root "$RUNNER_TEMP/custody/worker-root" --vetted-root "$RUNNER_TEMP/custody/source-root" --manifest worker-export/worker-export-manifest.json --worker-sha "$worker_sha" --vetted-state-sha "$vetted_state_sha" --report "$RUNNER_TEMP/custody/encrypted-custody-report.json"
@@ -249,6 +245,10 @@ jobs:
             git -c user.name='Independent Crucible Oversight' -c user.email='oversight@invalid.local' commit -m "Publish independently vetted encrypted custody"
             GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/vetted-state-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/vetted-state-ssh/known_hosts -o StrictHostKeyChecking=yes" git push origin HEAD:main
           fi
+      - name: Erase temporary plaintext custody
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/custody" "$RUNNER_TEMP/source-state-ssh" "$RUNNER_TEMP/vetted-state-ssh"
 
   emergency-stop:
     needs: oversight

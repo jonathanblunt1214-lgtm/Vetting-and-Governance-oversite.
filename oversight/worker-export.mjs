@@ -152,18 +152,18 @@ function queueSources(queue) {
 
 function validateCandidateRecord(record, sourceById, candidateIds) {
   if (
-    record?.schemaVersion !== 1 ||
+    (record?.schemaVersion ?? 1) !== 1 ||
     record.state !== 'candidate' ||
-    record.recordRevision !== 0 ||
-    record.claimScope !== null ||
-    record.hypothesis !== null ||
-    record.experimentalProof !== null ||
-    record.independentVerification !== null ||
-    record.proof !== null
+    (record.recordRevision ?? 0) !== 0 ||
+    record.claimScope != null ||
+    record.hypothesis != null ||
+    record.experimentalProof != null ||
+    record.independentVerification != null ||
+    record.proof != null
   ) {
     throw new Error('Worker export contains non-candidate or advanced learning state.');
   }
-  if (!record.gates || Object.values(record.gates).some((value) => value !== false)) {
+  if (record.gates !== undefined && (!record.gates || Object.values(record.gates).some((value) => value !== false))) {
     throw new Error('Worker candidate export contains a satisfied scientific gate.');
   }
   const candidate = record.candidate;
@@ -183,7 +183,7 @@ function validateCandidateRecord(record, sourceById, candidateIds) {
   if (!source || candidate.provenance?.contentSha256 !== source.contentSha256) {
     throw new Error(`Worker candidate ${candidate.id} is not bound to a vetted source hash.`);
   }
-  if (!Array.isArray(record.history) || record.history.length !== 1 || record.history[0]?.to !== 'candidate') {
+  if (record.history !== undefined && (!Array.isArray(record.history) || record.history.length !== 1 || record.history[0]?.to !== 'candidate')) {
     throw new Error('Worker candidate history contains an unauthorized transition.');
   }
 }

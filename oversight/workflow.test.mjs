@@ -22,8 +22,16 @@ test('additive report preservation occurs before the original oversight failure'
 
 test('worker custody is exact-tip and stale-lineage bound before publication', () => {
   assert.match(workflow, /ref: oversight-export/);
-  assert.match(workflow, /unexpected_entries=.*grep -Ev[\s\S]*?grep -cx 'sources\/source-queue\.json'[\s\S]*?grep -Ec '\^\[\^\/\]\+\\\.learning\\\.json\$'/);
+  assert.match(workflow, /python oversight\/worker_archive\.py[^\r\n]+worker-state\.zip[^\r\n]+worker-root/);
+  assert.doesNotMatch(workflow, /unzip -q[^\r\n]+worker-state\.zip/);
   assert.match(workflow, /worker_sha=\$\(git -C learning-worker rev-parse HEAD\)/);
   assert.match(workflow, /vetted_state_sha=\$\(git -C "\$RUNNER_TEMP\/vetted-state" rev-parse HEAD\)/);
   assert.match(workflow, /worker-export\.mjs merge[^\r\n]+--worker-sha "\$worker_sha"[^\r\n]+--vetted-state-sha "\$vetted_state_sha"/);
+});
+
+test('worker archive compatibility and safety tests run before custody merge', () => {
+  assert.match(workflow, /python -m unittest oversight\.worker_archive_test/);
+  assert.ok(workflow.indexOf('python -m unittest oversight.worker_archive_test') < workflow.indexOf('python oversight/worker_archive.py'));
+  assert.match(workflow, /Erase temporary plaintext custody[\s\S]*?if:\s*always\(\)[\s\S]*?rm -rf[^\r\n]+RUNNER_TEMP\/custody/);
+  assert.ok(workflow.indexOf('Sign and publish only the independently approved ciphertext') < workflow.indexOf('Erase temporary plaintext custody'));
 });

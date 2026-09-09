@@ -47,6 +47,36 @@ test('merges only candidate state and preserves independently vetted source cust
   assert.deepEqual(fs.readdirSync(item.vettedRoot).filter((name) => name.endsWith('.learning.json')), ['learning.learning.json']);
 });
 
+test('accepts legacy candidate-only records with omitted modern bookkeeping fields', () => {
+  const item = fixture();
+  const learningFile = path.join(item.workerRoot, 'learning.learning.json');
+  const envelope = JSON.parse(fs.readFileSync(learningFile));
+  const record = envelope.payload.candidateRecords[0];
+  for (const field of ['schemaVersion', 'recordRevision', 'claimScope', 'hypothesis', 'gates', 'experimentalProof', 'independentVerification', 'proof', 'history']) delete record[field];
+  envelope.payloadSha256 = sha(envelope.payload);
+  fs.writeFileSync(learningFile, JSON.stringify(envelope));
+
+  const result = mergeWorkerState({ workerRoot: item.workerRoot, vettedRoot: item.vettedRoot, manifest: item.manifest, expectedWorkerSha: item.manifest.workerSha, expectedVettedStateSha: item.manifest.vettedStateSha, reportFile: item.reportFile });
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.independentlyValidated, true);
+});
+
+test('legacy compatibility never accepts advanced state or satisfied gates', () => {
+  for (const mutation of [
+    (record) => { record.recordRevision = 1; },
+    (record) => { record.hypothesis = 'advanced'; },
+    (record) => { record.gates = { controlledReproduction: true }; },
+  ]) {
+    const item = fixture();
+    const learningFile = path.join(item.workerRoot, 'learning.learning.json');
+    const envelope = JSON.parse(fs.readFileSync(learningFile));
+    mutation(envelope.payload.candidateRecords[0]);
+    envelope.payloadSha256 = sha(envelope.payload);
+    fs.writeFileSync(learningFile, JSON.stringify(envelope));
+    assert.throws(() => mergeWorkerState({ workerRoot: item.workerRoot, vettedRoot: item.vettedRoot, manifest: item.manifest, expectedWorkerSha: item.manifest.workerSha, expectedVettedStateSha: item.manifest.vettedStateSha, reportFile: item.reportFile }), /advanced learning state|satisfied scientific gate/);
+  }
+});
+
 test('rejects promoted worker knowledge and stale vetted-state lineage', () => {
   const item = fixture();
   const learningFile = path.join(item.workerRoot, 'learning.learning.json');
