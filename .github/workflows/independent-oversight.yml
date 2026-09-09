@@ -219,11 +219,29 @@ jobs:
           mapfile -t worker_entries < <(unzip -Z1 "$RUNNER_TEMP/custody/worker-state.zip")
           printf 'Worker archive structural entries (%s):\n' "${#worker_entries[@]}"
           printf '%s\n' "${worker_entries[@]}"
-          unexpected_entries=$(printf '%s\n' "${worker_entries[@]}" | grep -Ev '^(sources/|sources/source-queue\.json|[^/]+\.learning\.json)$' || true)
+          queue_entry=''
+          learning_entry=''
+          unexpected_entries=''
+          for entry in "${worker_entries[@]}"; do
+            normalized_entry=${entry//\\//}
+            case "$normalized_entry" in
+              sources/) ;;
+              sources/source-queue.json)
+                if [ -n "$queue_entry" ]; then unexpected_entries="${unexpected_entries}duplicate queue entry\n"; else queue_entry="$entry"; fi
+                ;;
+              *.learning.json)
+                if [[ "$normalized_entry" == */* ]] || [ -n "$learning_entry" ]; then unexpected_entries="${unexpected_entries}invalid or duplicate learning entry\n"; else learning_entry="$entry"; fi
+                ;;
+              *) unexpected_entries="${unexpected_entries}unexpected archive entry: ${normalized_entry}\n" ;;
+            esac
+          done
           test -z "$unexpected_entries"
-          test "$(printf '%s\n' "${worker_entries[@]}" | grep -cx 'sources/source-queue.json')" -eq 1
-          test "$(printf '%s\n' "${worker_entries[@]}" | grep -Ec '^[^/]+\.learning\.json$')" -eq 1
-          unzip -q "$RUNNER_TEMP/custody/worker-state.zip" -d "$RUNNER_TEMP/custody/worker-root"
+          test -n "$queue_entry"
+          test -n "$learning_entry"
+          mkdir -p "$RUNNER_TEMP/custody/worker-root/sources"
+          unzip -p "$RUNNER_TEMP/custody/worker-state.zip" "$queue_entry" > "$RUNNER_TEMP/custody/worker-root/sources/source-queue.json"
+          learning_name=${learning_entry//\\//}
+          unzip -p "$RUNNER_TEMP/custody/worker-state.zip" "$learning_entry" > "$RUNNER_TEMP/custody/worker-root/$learning_name"
           worker_sha=$(git -C learning-worker rev-parse HEAD)
           vetted_state_sha=$(git -C "$RUNNER_TEMP/vetted-state" rev-parse HEAD)
           node oversight/worker-export.mjs merge --worker-root "$RUNNER_TEMP/custody/worker-root" --vetted-root "$RUNNER_TEMP/custody/source-root" --manifest worker-export/worker-export-manifest.json --worker-sha "$worker_sha" --vetted-state-sha "$vetted_state_sha" --report "$RUNNER_TEMP/custody/encrypted-custody-report.json"
