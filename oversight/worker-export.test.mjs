@@ -47,6 +47,19 @@ test('merges only candidate state and preserves independently vetted source cust
   assert.deepEqual(fs.readdirSync(item.vettedRoot).filter((name) => name.endsWith('.learning.json')), ['learning.learning.json']);
 });
 
+test('accepts legacy candidate records with an omitted revision as revision zero', () => {
+  const item = fixture();
+  const learningFile = path.join(item.workerRoot, 'learning.learning.json');
+  const envelope = JSON.parse(fs.readFileSync(learningFile));
+  delete envelope.payload.candidateRecords[0].recordRevision;
+  envelope.payloadSha256 = sha(envelope.payload);
+  fs.writeFileSync(learningFile, JSON.stringify(envelope));
+
+  const result = mergeWorkerState({ workerRoot: item.workerRoot, vettedRoot: item.vettedRoot, manifest: item.manifest, expectedWorkerSha: item.manifest.workerSha, expectedVettedStateSha: item.manifest.vettedStateSha, reportFile: item.reportFile });
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.independentlyValidated, true);
+});
+
 test('rejects promoted worker knowledge and stale vetted-state lineage', () => {
   const item = fixture();
   const learningFile = path.join(item.workerRoot, 'learning.learning.json');

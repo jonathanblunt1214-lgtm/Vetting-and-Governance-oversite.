@@ -154,7 +154,7 @@ function validateCandidateRecord(record, sourceById, candidateIds) {
   if (
     record?.schemaVersion !== 1 ||
     record.state !== 'candidate' ||
-    record.recordRevision !== 0 ||
+    (record.recordRevision ?? 0) !== 0 ||
     record.claimScope !== null ||
     record.hypothesis !== null ||
     record.experimentalProof !== null ||
