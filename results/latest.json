@@ -3,9 +3,9 @@
   "crucibleCommit": "984f47c345fcbc96d057d15428d31ed0c9f08abb",
   "learningWorkerCommit": "272e6a344f1516b3a58f14b36643d34a537dfd45",
   "oversight": {
-    "state": "failed",
-    "severity": "critical",
-    "action": "STOP",
+    "state": "passed",
+    "severity": "none",
+    "action": "NONE",
     "organism": {
       "state": "passed",
       "severity": "none",
@@ -13,14 +13,10 @@
       "findings": []
     },
     "crucible": {
-      "state": "failed",
-      "severity": "critical",
-      "action": "STOP",
-      "findings": [
-        {
-          "kind": "handoff-not-active"
-        }
-      ],
+      "state": "passed",
+      "severity": "none",
+      "action": "NONE",
+      "findings": [],
       "requiredChecked": 9
     },
     "learningWorker": {
@@ -32,7 +28,7 @@
     }
   },
   "manifests": [],
-  "generatedAt": "2026-09-09T21:40:26.435Z",
+  "generatedAt": "2026-09-09T21:46:38.058Z",
   "independent": true,
   "assimilatedRecords": 0,
   "proofStageSatisfied": false
