@@ -210,7 +210,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trap 'rm -rf "$RUNNER_TEMP/custody"' EXIT
           mkdir -p "$RUNNER_TEMP/custody/source-root" "$RUNNER_TEMP/custody/worker-root" "$RUNNER_TEMP/custody/vetted-output"
           node oversight/encrypted-custody.mjs join --root encrypted-input --output "$RUNNER_TEMP/custody/source-bundle.enc"
           node oversight/encrypted-custody.mjs decrypt --input "$RUNNER_TEMP/custody/source-bundle.enc" --output "$RUNNER_TEMP/custody/source-bundle.tar.gz"
@@ -246,6 +245,10 @@ jobs:
             git -c user.name='Independent Crucible Oversight' -c user.email='oversight@invalid.local' commit -m "Publish independently vetted encrypted custody"
             GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/vetted-state-ssh/key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/vetted-state-ssh/known_hosts -o StrictHostKeyChecking=yes" git push origin HEAD:main
           fi
+      - name: Erase temporary plaintext custody
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/custody" "$RUNNER_TEMP/source-state-ssh" "$RUNNER_TEMP/vetted-state-ssh"
 
   emergency-stop:
     needs: oversight

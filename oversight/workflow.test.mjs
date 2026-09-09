@@ -32,4 +32,6 @@ test('worker custody is exact-tip and stale-lineage bound before publication', (
 test('worker archive compatibility and safety tests run before custody merge', () => {
   assert.match(workflow, /python -m unittest oversight\.worker_archive_test/);
   assert.ok(workflow.indexOf('python -m unittest oversight.worker_archive_test') < workflow.indexOf('python oversight/worker_archive.py'));
+  assert.match(workflow, /Erase temporary plaintext custody[\s\S]*?if:\s*always\(\)[\s\S]*?rm -rf[^\r\n]+RUNNER_TEMP\/custody/);
+  assert.ok(workflow.indexOf('Sign and publish only the independently approved ciphertext') < workflow.indexOf('Erase temporary plaintext custody'));
 });
