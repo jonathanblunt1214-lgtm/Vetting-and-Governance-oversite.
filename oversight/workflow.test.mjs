@@ -27,3 +27,8 @@ test('worker custody is exact-tip and stale-lineage bound before publication', (
   assert.match(workflow, /vetted_state_sha=\$\(git -C "\$RUNNER_TEMP\/vetted-state" rev-parse HEAD\)/);
   assert.match(workflow, /worker-export\.mjs merge[^\r\n]+--worker-sha "\$worker_sha"[^\r\n]+--vetted-state-sha "\$vetted_state_sha"/);
 });
+
+test('worker archive failures report only structural entry names', () => {
+  assert.match(workflow, /Worker archive structural entries/);
+  assert.match(workflow, /printf '%s\\n' "\$\{worker_entries\[@\]\}"/);
+});

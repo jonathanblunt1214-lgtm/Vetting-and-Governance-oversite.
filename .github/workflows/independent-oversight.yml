@@ -217,6 +217,8 @@ jobs:
           node oversight/worker-export.mjs join --root worker-export --output "$RUNNER_TEMP/custody/worker-state.enc"
           node oversight/worker-export.mjs decrypt --input "$RUNNER_TEMP/custody/worker-state.enc" --output "$RUNNER_TEMP/custody/worker-state.zip" --manifest worker-export/worker-export-manifest.json
           mapfile -t worker_entries < <(unzip -Z1 "$RUNNER_TEMP/custody/worker-state.zip")
+          printf 'Worker archive structural entries (%s):\n' "${#worker_entries[@]}"
+          printf '%s\n' "${worker_entries[@]}"
           unexpected_entries=$(printf '%s\n' "${worker_entries[@]}" | grep -Ev '^(sources/|sources/source-queue\.json|[^/]+\.learning\.json)$' || true)
           test -z "$unexpected_entries"
           test "$(printf '%s\n' "${worker_entries[@]}" | grep -cx 'sources/source-queue.json')" -eq 1
