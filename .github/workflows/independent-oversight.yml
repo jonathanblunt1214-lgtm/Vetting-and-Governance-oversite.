@@ -221,6 +221,10 @@ jobs:
           worker_sha=$(git -C learning-worker rev-parse HEAD)
           vetted_state_sha=$(git -C "$RUNNER_TEMP/vetted-state" rev-parse HEAD)
           node oversight/worker-export.mjs merge --worker-root "$RUNNER_TEMP/custody/worker-root" --vetted-root "$RUNNER_TEMP/custody/source-root" --manifest worker-export/worker-export-manifest.json --worker-sha "$worker_sha" --vetted-state-sha "$vetted_state_sha" --report "$RUNNER_TEMP/custody/encrypted-custody-report.json"
+          # Re-run the independent byte-exact custody verifier after the merge. This is the
+          # publication boundary: no ciphertext may be created from queue/learning bytes that
+          # the refreshed manifest does not commit to.
+          node oversight/encrypted-custody.mjs vet --root "$RUNNER_TEMP/custody/source-root" --ciphertext-manifest encrypted-input/encrypted-chunks.json > "$RUNNER_TEMP/custody/post-merge-custody.json"
           tar -czf "$RUNNER_TEMP/custody/merged-source-bundle.tar.gz" -C "$RUNNER_TEMP/custody/source-root" .
           node oversight/encrypted-custody.mjs encrypt-vetted --input "$RUNNER_TEMP/custody/merged-source-bundle.tar.gz" --output "$RUNNER_TEMP/custody/vetted-source-bundle.enc"
           node oversight/encrypted-custody.mjs split-vetted --input "$RUNNER_TEMP/custody/vetted-source-bundle.enc" --root "$RUNNER_TEMP/custody/vetted-output"

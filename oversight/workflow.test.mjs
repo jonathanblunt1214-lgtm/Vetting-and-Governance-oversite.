@@ -27,6 +27,10 @@ test('worker custody is exact-tip and stale-lineage bound before publication', (
   assert.match(workflow, /worker_sha=\$\(git -C learning-worker rev-parse HEAD\)/);
   assert.match(workflow, /vetted_state_sha=\$\(git -C "\$RUNNER_TEMP\/vetted-state" rev-parse HEAD\)/);
   assert.match(workflow, /worker-export\.mjs merge[^\r\n]+--worker-sha "\$worker_sha"[^\r\n]+--vetted-state-sha "\$vetted_state_sha"/);
+  const merge = workflow.indexOf('worker-export.mjs merge');
+  const postMergeVerification = workflow.indexOf('post-merge-custody.json');
+  const encrypt = workflow.indexOf('encrypted-custody.mjs encrypt-vetted');
+  assert.ok(merge > 0 && postMergeVerification > merge && encrypt > postMergeVerification);
 });
 
 test('worker archive compatibility and safety tests run before custody merge', () => {

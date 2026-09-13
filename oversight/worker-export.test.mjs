@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { mergeWorkerState, sha } from './worker-export.mjs';
+import { mergeWorkerState, sha, shaFile } from './worker-export.mjs';
 
 const project = 'github:jonathanblunt1214-lgtm/The-Crucible';
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
@@ -22,14 +22,26 @@ function fixture() {
   workerQueue.links[0].durablePath = 'D:\\runner\\temporary\\source.html';
   workerQueue.links[0].state = 'claim-extraction-complete';
   workerQueue.links[0].claimExtraction = { candidateIds: ['candidate-1'], windows: [] };
-  fs.writeFileSync(path.join(vettedRoot, 'source-queue.json'), JSON.stringify(vettedQueue));
+  const vettedQueueFile = path.join(vettedRoot, 'source-queue.json');
+  fs.writeFileSync(vettedQueueFile, JSON.stringify(vettedQueue));
   fs.writeFileSync(path.join(workerRoot, 'sources', 'source-queue.json'), JSON.stringify(workerQueue));
   const candidate = { schemaVersion: 1, id: 'candidate-1', projectId: project, claim: 'bounded claim', claimBoundary: 'bounded', generalizationBoundary: 'bounded', kind: 'retrieval', provenance: { sourceType: 'web', sourceId: source.id, retrievedAt: '2026-09-05T00:00:00.000Z', author: 'author', license: 'unknown', contentSha256: contentHash }, classification: 'Insufficient Evidence', createdAt: '2026-09-05T00:00:00.000Z' };
   const record = { schemaVersion: 1, candidate, recordRevision: 0, claimScope: null, state: 'candidate', hypothesis: null, gates: { falsifiableHypothesis: false, controlledReproduction: false, causalIsolation: false, controlTesting: false, independentVerification: false, negativeTesting: false, regressionTesting: false, deterministicScopeProof: false, claimBoundaryCheck: false, generalizationCheck: false, contradictionAnalysis: false }, experimentalProof: null, independentVerification: null, proof: null, history: [{ from: null, to: 'candidate', at: candidate.createdAt, reason: 'ingested' }] };
   const payload = { schemaVersion: 1, projectId: project, revision: 1, candidateRecords: [record], knowledgeVersions: [], activeVersion: null, auditLog: [] };
   const envelope = { schemaVersion: 1, payload, payloadSha256: sha(payload) };
   fs.writeFileSync(path.join(workerRoot, 'learning.learning.json'), JSON.stringify(envelope));
-  fs.writeFileSync(path.join(vettedRoot, 'old.learning.json'), '{}');
+  const oldLearningFile = path.join(vettedRoot, 'old.learning.json');
+  fs.writeFileSync(oldLearningFile, '{}');
+  fs.writeFileSync(path.join(vettedRoot, 'manifest.json'), JSON.stringify({
+    schemaVersion: 1,
+    projectId: project,
+    repository: 'jonathanblunt1214-lgtm/The-Crucible',
+    ref: 'refs/heads/development',
+    queueSha256: shaFile(vettedQueueFile),
+    learningFile: path.basename(oldLearningFile),
+    learningSha256: shaFile(oldLearningFile),
+    sourceFiles: [],
+  }));
   const reportFile = path.join(root, 'report.json');
   fs.writeFileSync(reportFile, JSON.stringify({ schemaVersion: 1, projectId: project }));
   const manifest = { schemaVersion: 1, stage: 'worker-candidate-export', projectId: project, repository: 'jonathanblunt1214-lgtm/Learning-Worker', ref: 'refs/heads/main', workerSha: 'a'.repeat(40), vettedStateSha: 'b'.repeat(40), generatedAt: '2026-09-05T00:00:00.000Z', plaintextSha256: 'c'.repeat(64) };
@@ -45,6 +57,20 @@ test('merges only candidate state and preserves independently vetted source cust
   assert.equal(result.candidateCount, 1);
   assert.equal(result.independentlyValidated, true);
   assert.deepEqual(fs.readdirSync(item.vettedRoot).filter((name) => name.endsWith('.learning.json')), ['learning.learning.json']);
+});
+
+test('refreshes the manifest and report commitments after changing vetted custody', () => {
+  const item = fixture();
+  mergeWorkerState({ workerRoot: item.workerRoot, vettedRoot: item.vettedRoot, manifest: item.manifest, expectedWorkerSha: item.manifest.workerSha, expectedVettedStateSha: item.manifest.vettedStateSha, reportFile: item.reportFile });
+  const custody = JSON.parse(fs.readFileSync(path.join(item.vettedRoot, 'manifest.json')));
+  const queueFile = path.join(item.vettedRoot, 'source-queue.json');
+  const learningFile = path.join(item.vettedRoot, 'learning.learning.json');
+  const report = JSON.parse(fs.readFileSync(item.reportFile));
+  assert.equal(custody.learningFile, 'learning.learning.json');
+  assert.equal(custody.queueSha256, shaFile(queueFile));
+  assert.equal(custody.learningSha256, shaFile(learningFile));
+  assert.equal(report.queueSha256, custody.queueSha256);
+  assert.equal(report.learningSha256, custody.learningSha256);
 });
 
 test('accepts legacy candidate-only records with omitted modern bookkeeping fields', () => {

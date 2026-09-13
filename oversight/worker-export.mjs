@@ -8,6 +8,8 @@ const MAGIC = 'CRUCIBLE-WORKER-EXPORT-V1';
 const PROJECT = 'github:jonathanblunt1214-lgtm/The-Crucible';
 const REPOSITORY = 'jonathanblunt1214-lgtm/Learning-Worker';
 const REF = 'refs/heads/main';
+const CUSTODY_REPOSITORY = 'jonathanblunt1214-lgtm/The-Crucible';
+const CUSTODY_REF = 'refs/heads/development';
 const TAG_BYTES = 16;
 const CANDIDATE_KEYS = new Set([
   'schemaVersion',
@@ -188,6 +190,47 @@ function validateCandidateRecord(record, sourceById, candidateIds) {
   }
 }
 
+function refreshCustodyManifest(vettedRoot, learningFileName) {
+  const manifestFile = path.join(vettedRoot, 'manifest.json');
+  const queueFile = path.join(vettedRoot, 'source-queue.json');
+  const learningFile = path.join(vettedRoot, learningFileName);
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+  if (
+    manifest?.schemaVersion !== 1 ||
+    manifest.projectId !== PROJECT ||
+    manifest.repository !== CUSTODY_REPOSITORY ||
+    manifest.ref !== CUSTODY_REF ||
+    !Array.isArray(manifest.sourceFiles) ||
+    !digest(manifest.queueSha256) ||
+    !digest(manifest.learningSha256)
+  ) {
+    throw new Error('Vetted custody manifest identity or commitments are invalid.');
+  }
+  if (!fs.existsSync(queueFile) || !fs.existsSync(learningFile)) {
+    throw new Error('Merged queue or learning envelope is missing before custody commitment.');
+  }
+
+  // mergeWorkerState changes both files. The manifest came from raw intake and therefore
+  // commits to their pre-merge bytes; publishing it unchanged creates an authenticated bundle
+  // whose own manifest rejects the queue it contains. Refresh all mutable commitments inside
+  // the same unpublished staging directory, then re-read them before encryption.
+  const next = {
+    ...manifest,
+    learningFile: learningFileName,
+    queueSha256: shaFile(queueFile),
+    learningSha256: shaFile(learningFile),
+    updatedAt: new Date().toISOString(),
+  };
+  const temporary = `${manifestFile}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+  fs.renameSync(temporary, manifestFile);
+  const committed = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+  if (committed.queueSha256 !== shaFile(queueFile) || committed.learningSha256 !== shaFile(learningFile)) {
+    throw new Error('Post-merge custody commitments do not match the files that would be encrypted.');
+  }
+  return committed;
+}
+
 export function mergeWorkerState({ workerRoot, vettedRoot, manifest, expectedWorkerSha, expectedVettedStateSha, reportFile }) {
   validateIdentity(manifest);
   if (manifest.workerSha !== commit(expectedWorkerSha, 'expectedWorkerSha')) {
@@ -248,8 +291,11 @@ export function mergeWorkerState({ workerRoot, vettedRoot, manifest, expectedWor
     fs.rmSync(path.join(vettedRoot, name));
   }
   fs.copyFileSync(learningFile, path.join(vettedRoot, learningFiles[0]), fs.constants.COPYFILE_EXCL);
+  const custody = refreshCustodyManifest(vettedRoot, learningFiles[0]);
 
   const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+  report.queueSha256 = custody.queueSha256;
+  report.learningSha256 = custody.learningSha256;
   report.workerCandidateExport = {
     workerSha: manifest.workerSha,
     priorVettedStateSha: manifest.vettedStateSha,
@@ -298,4 +344,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { MAGIC, PROJECT, REF, REPOSITORY, sha, shaFile };
+export { MAGIC, PROJECT, REF, REPOSITORY, refreshCustodyManifest, sha, shaFile };
