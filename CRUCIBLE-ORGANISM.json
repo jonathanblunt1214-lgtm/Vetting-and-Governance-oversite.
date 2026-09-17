@@ -16,6 +16,19 @@
       "role": "governed-learning-worker"
     }
   ],
+  "gateEvidence": {
+    "schemaVersion": 1,
+    "componentId": "core",
+    "repository": "jonathanblunt1214-lgtm/The-Crucible",
+    "ref": "development",
+    "workflow": "hosted-learning-proof.yml",
+    "artifactPrefix": "hosted-learning-proof-",
+    "file": "gate-evidence.json",
+    "gates": ["R4", "R5", "R6", "R7", "R8"],
+    "states": ["satisfied", "unsatisfied", "unproven", "manual-evidence-required", "pending", "unknown"],
+    "custodyOnly": true,
+    "conveysNoScientificProof": true
+  },
   "oversightIsComponent": false,
   "assimilationAuthorized": false
 }

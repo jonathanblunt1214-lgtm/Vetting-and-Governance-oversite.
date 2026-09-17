@@ -1,0 +1,214 @@
+name: Crucible gate evidence custody
+
+# Oversight pulls on its own schedule under its own read-only identity. There is
+# deliberately no workflow_run, repository_dispatch or Crucible-supplied input:
+# Crucible cannot trigger, configure, redirect or suppress this custody pull.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crucible-gate-evidence-custody
+  cancel-in-progress: false
+
+jobs:
+  take-custody:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      admitted: ${{ steps.admit.outputs.admitted }}
+      revision: ${{ steps.admit.outputs.revision }}
+      envelope_b64: ${{ steps.admit.outputs.envelope_b64 }}
+      record_b64: ${{ steps.admit.outputs.record_b64 }}
+      ledger_b64: ${{ steps.admit.outputs.ledger_b64 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Test the independent custody verifier
+        run: node --test oversight/gate-custody.test.mjs
+
+      - name: Select the Crucible proof run under oversight's own identity
+        id: run
+        env:
+          CRUCIBLE_ARTIFACT_READ_TOKEN: ${{ secrets.CRUCIBLE_ARTIFACT_READ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CRUCIBLE_ARTIFACT_READ_TOKEN"
+          repository=$(jq -r '.gateEvidence.repository' CRUCIBLE-ORGANISM.json)
+          ref=$(jq -r '.gateEvidence.ref' CRUCIBLE-ORGANISM.json)
+          workflow=$(jq -r '.gateEvidence.workflow' CRUCIBLE-ORGANISM.json)
+          # status=completed, any conclusion. The artifact is uploaded with
+          # `if: always()`, and a red run is exactly the one worth holding.
+          runs=$(curl --fail-with-body --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $CRUCIBLE_ARTIFACT_READ_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$repository/actions/workflows/$workflow/runs?branch=$ref&status=completed&per_page=1")
+          echo "$runs" | jq -e '.workflow_runs | length == 1' >/dev/null
+          echo "$runs" | jq -r '.workflow_runs[0]
+            | "run_id=\(.id)", "run_attempt=\(.run_attempt)", "conclusion=\(.conclusion)",
+              "head_sha=\(.head_sha)", "completed_at=\(.updated_at)"' >> "$GITHUB_OUTPUT"
+
+      - name: Download the registered gate-evidence artifact
+        env:
+          CRUCIBLE_ARTIFACT_READ_TOKEN: ${{ secrets.CRUCIBLE_ARTIFACT_READ_TOKEN }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          RUN_ATTEMPT: ${{ steps.run.outputs.run_attempt }}
+          RUN_CONCLUSION: ${{ steps.run.outputs.conclusion }}
+          RUN_HEAD_SHA: ${{ steps.run.outputs.head_sha }}
+          RUN_COMPLETED_AT: ${{ steps.run.outputs.completed_at }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository=$(jq -r '.gateEvidence.repository' CRUCIBLE-ORGANISM.json)
+          ref=$(jq -r '.gateEvidence.ref' CRUCIBLE-ORGANISM.json)
+          workflow=$(jq -r '.gateEvidence.workflow' CRUCIBLE-ORGANISM.json)
+          prefix=$(jq -r '.gateEvidence.artifactPrefix' CRUCIBLE-ORGANISM.json)
+          file=$(jq -r '.gateEvidence.file' CRUCIBLE-ORGANISM.json)
+          artifact="${prefix}${RUN_ID}-${RUN_ATTEMPT}"
+          dir="$RUNNER_TEMP/gate-evidence"
+          mkdir -p "$dir"
+          list=$(curl --fail-with-body --silent --show-error \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $CRUCIBLE_ARTIFACT_READ_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$repository/actions/runs/$RUN_ID/artifacts?per_page=100")
+          id=$(echo "$list" | jq -r --arg name "$artifact" \
+            '.artifacts[] | select(.name == $name and .expired == false) | .id' | head -n1)
+          test -n "$id"
+          curl --fail-with-body --silent --show-error --location --max-filesize 33554432 \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $CRUCIBLE_ARTIFACT_READ_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --output "$dir/artifact.zip" \
+            "https://api.github.com/repos/$repository/actions/artifacts/$id/zip"
+          # The artifact is untrusted data and never executable: exactly one
+          # named JSON member is extracted and nothing else in the zip is read.
+          unzip -p "$dir/artifact.zip" "$file" > "$dir/gate-evidence.json"
+          test -s "$dir/gate-evidence.json"
+          jq -n --arg repository "$repository" --arg ref "$ref" --arg workflow "$workflow" \
+                --arg file "$file" --arg artifact "$artifact" \
+                --arg conclusion "$RUN_CONCLUSION" --arg headSha "$RUN_HEAD_SHA" \
+                --arg completedAt "$RUN_COMPLETED_AT" \
+                --argjson runId "$RUN_ID" --argjson runAttempt "$RUN_ATTEMPT" \
+                '{repository:$repository, ref:$ref, workflow:$workflow, file:$file,
+                  runId:$runId, runAttempt:$runAttempt, artifactName:$artifact,
+                  conclusion:$conclusion, headSha:$headSha, completedAt:$completedAt}' \
+                > "$dir/source.json"
+
+      - name: Read the copy oversight already holds
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin vetted-results || true
+          if git cat-file -e origin/vetted-results:results/gate-evidence/ledger.json 2>/dev/null; then
+            git show origin/vetted-results:results/gate-evidence/ledger.json \
+              > "$RUNNER_TEMP/gate-evidence/ledger.json"
+          fi
+
+      - name: Verify the envelope and admit it into custody
+        id: admit
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/gate-evidence"
+          set +e
+          node oversight/gate-custody.mjs admit \
+            --envelope "$dir/gate-evidence.json" \
+            --organism CRUCIBLE-ORGANISM.json \
+            --source "$dir/source.json" \
+            --ledger "$dir/ledger.json" \
+            --record "$dir/custody-record.json" \
+            --ledger-output "$dir/ledger.next.json"
+          status=$?
+          set -e
+          # Exit 3 is a scheduled pull that found no newer revision. Every other
+          # non-zero status is a rejection, and a rejection stores nothing.
+          if [ "$status" -eq 3 ]; then echo "admitted=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          test "$status" -eq 0
+          bytes=$(cat "$dir/gate-evidence.json" "$dir/custody-record.json" "$dir/ledger.next.json" | wc -c)
+          test "$bytes" -lt 600000
+          echo "admitted=true" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$(jq -r .revision "$dir/custody-record.json")" >> "$GITHUB_OUTPUT"
+          printf 'envelope_b64=%s\n' "$(base64 -w0 "$dir/gate-evidence.json")" >> "$GITHUB_OUTPUT"
+          printf 'record_b64=%s\n' "$(base64 -w0 "$dir/custody-record.json")" >> "$GITHUB_OUTPUT"
+          printf 'ledger_b64=%s\n' "$(base64 -w0 "$dir/ledger.next.json")" >> "$GITHUB_OUTPUT"
+
+  archive-gate-evidence:
+    needs: take-custody
+    if: needs.take-custody.result == 'success' && needs.take-custody.outputs.admitted == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: vetted-return
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - name: Sign and archive the exact copy on the oversight-owned results branch
+        env:
+          ENVELOPE_B64: ${{ needs.take-custody.outputs.envelope_b64 }}
+          RECORD_B64: ${{ needs.take-custody.outputs.record_b64 }}
+          LEDGER_B64: ${{ needs.take-custody.outputs.ledger_b64 }}
+          REVISION: ${{ needs.take-custody.outputs.revision }}
+          SIGNING_PRIVATE_KEY: ${{ secrets.OVERSIGHT_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/gate-custody"
+          trap 'rm -rf "$stage" signing-key.pem' EXIT
+          mkdir -p "$stage"
+          test -n "$ENVELOPE_B64"
+          test -n "$RECORD_B64"
+          test -n "$LEDGER_B64"
+          test -n "$SIGNING_PRIVATE_KEY"
+          printf '%s' "$ENVELOPE_B64" | base64 --decode > "$stage/gate-evidence.json"
+          printf '%s' "$RECORD_B64"   | base64 --decode > "$stage/custody-record.json"
+          printf '%s' "$LEDGER_B64"   | base64 --decode > "$stage/ledger.json"
+          printf '%s' "$SIGNING_PRIVATE_KEY" > signing-key.pem
+          openssl pkeyutl -sign -rawin -inkey signing-key.pem -in "$stage/gate-evidence.json" -out "$stage/gate-evidence.sig"
+          openssl pkeyutl -sign -rawin -inkey signing-key.pem -in "$stage/custody-record.json" -out "$stage/custody-record.sig"
+          evidence_sha=$(sha256sum "$stage/gate-evidence.json" | cut -d' ' -f1)
+          git fetch origin vetted-results || true
+          if git show-ref --verify --quiet refs/remotes/origin/vetted-results; then
+            git switch -C vetted-results origin/vetted-results
+          else
+            git switch --orphan vetted-results
+            if [ -n "$(git ls-files)" ]; then git rm -rf .; fi
+          fi
+          mkdir -p results/gate-evidence/revisions
+          # Append-only: a revision already in custody is never rewritten.
+          test ! -e "results/gate-evidence/revisions/$REVISION.json"
+          cp "$stage/gate-evidence.json"  "results/gate-evidence/revisions/$REVISION.json"
+          cp "$stage/gate-evidence.sig"   "results/gate-evidence/revisions/$REVISION.sig"
+          cp "$stage/custody-record.json" "results/gate-evidence/revisions/$REVISION.record.json"
+          cp "$stage/custody-record.sig"  "results/gate-evidence/revisions/$REVISION.record.sig"
+          cp "$stage/gate-evidence.json"  results/gate-evidence/latest.json
+          cp "$stage/gate-evidence.sig"   results/gate-evidence/latest.sig
+          cp "$stage/custody-record.json" results/gate-evidence/latest.record.json
+          cp "$stage/custody-record.sig"  results/gate-evidence/latest.record.sig
+          cp "$stage/ledger.json"         results/gate-evidence/ledger.json
+          # Archival is additive. The record carries the source run's conclusion
+          # verbatim, so holding a red run's evidence never makes it a pass, and
+          # a held `satisfied` verdict is custody, never scientific proof.
+          jq -n --arg sha "$evidence_sha" --argjson revision "$REVISION" \
+            '{schemaVersion:1, revision:$revision, evidenceSha256:$sha,
+              custodyOnly:true, conveysNoScientificProof:true}' \
+            > results/gate-evidence/latest.metadata.json
+          git add results/gate-evidence
+          if ! git diff --cached --quiet; then
+            git -c user.name='Independent Crucible Oversight' -c user.email='oversight@invalid.local' \
+              commit -m "Take custody of Crucible gate evidence revision $REVISION ($evidence_sha)"
+            git push origin HEAD:vetted-results
+          fi
